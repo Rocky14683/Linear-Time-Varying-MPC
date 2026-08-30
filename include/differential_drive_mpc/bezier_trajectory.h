@@ -8,6 +8,27 @@
 
 namespace differential_drive_mpc {
 
+// Type-erased reference consumed by the MPC. Concrete trajectory types can
+// provide their own path geometry while sharing the controller.
+class Trajectory {
+ public:
+  virtual ~Trajectory() = default;
+  virtual TrajectoryPoint Evaluate(double time) const = 0;
+  virtual double duration() const = 0;
+};
+
+// Static adapter for concrete trajectory implementations. The virtual surface
+// is intentionally limited to the controller-facing reference; path-specific
+// work remains statically dispatched through Derived.
+template <typename Derived>
+class TrajectoryBase : public Trajectory {
+ public:
+  TrajectoryPoint Evaluate(double time) const final {
+    return static_cast<const Derived*>(this)->EvaluateImpl(time);
+  }
+  double duration() const final { return static_cast<const Derived*>(this)->duration_impl(); }
+};
+
 // Limits for a time-parameterized, differentially feasible reference path.
 struct TrajectoryLimits {
   double max_linear_velocity = 10.0;
@@ -24,46 +45,74 @@ struct TrajectoryLimits {
   double max_wheel_acceleration = 1000.0;
 };
 
-// A Bezier path reparameterized by arc length, with a duration selected to
-// respect the supplied motion limits.
-class BezierTrajectory {
+// A C2 interpolating cubic B-spline through the supplied waypoints, with a
+// forward/backward, minimum-time scaling pass that respects chassis and wheel
+// limits.
+class CubicBSplineTrajectory : public TrajectoryBase<CubicBSplineTrajectory> {
  public:
-  // Creates a trajectory from at least four control points. The duration is
-  // increased when needed to satisfy all limits.
-  static BezierTrajectory Create(std::vector<Eigen::Vector2d> control_points,
-                                 double requested_duration, const TrajectoryLimits& limits);
+  // Creates the minimum-time trajectory through at least four waypoints.
+  static CubicBSplineTrajectory Create(std::vector<Eigen::Vector2d> waypoints,
+                                       const TrajectoryLimits& limits, bool reverse = false);
 
-  TrajectoryPoint Evaluate(double time) const;
+  TrajectoryPoint EvaluateImpl(double time) const;
   std::vector<TrajectoryPoint> Sample(int sample_count) const;
   // Returns spatially uniform samples for rendering the geometric path. Unlike
   // Sample(), these positions are uniformly spaced by arc length, not time.
   std::vector<Eigen::Vector2d> SamplePositionsByDistance(int sample_count) const;
 
-  const std::vector<Eigen::Vector2d>& control_points() const { return control_points_; }
-  double duration() const { return duration_; }
+  const std::vector<Eigen::Vector2d>& control_points() const { return waypoints_; }
+  double duration_impl() const { return duration_; }
   double total_length() const { return total_length_; }
   const TrajectoryLimits& limits() const { return limits_; }
+  bool reverse() const { return reverse_; }
 
  private:
   struct ArcLengthSample {
-    double bezier_parameter = 0.0;
+    double path_parameter = 0.0;
     double distance = 0.0;
   };
 
-  BezierTrajectory(std::vector<Eigen::Vector2d> control_points, double duration,
-                   TrajectoryLimits limits);
+  struct TimeProfileSample {
+    double distance = 0.0;
+    double time = 0.0;
+    double speed = 0.0;
+  };
 
+  struct ProgressState {
+    double distance = 0.0;
+    double speed = 0.0;
+    double acceleration = 0.0;
+  };
+
+  CubicBSplineTrajectory(std::vector<Eigen::Vector2d> waypoints, TrajectoryLimits limits,
+                          bool reverse);
+
+  void BuildInterpolatingSpline();
   void BuildArcLengthTable();
-  Eigen::Vector2d EvaluateDerivative(double bezier_parameter, int order) const;
+  void BuildMinimumTimeProfile();
+  Eigen::Vector2d EvaluateDerivative(double path_parameter, int order) const;
   double ParameterAtDistance(double distance) const;
-  double FindRequiredTimeScale() const;
+  double CurvatureAtDistance(double distance) const;
+  double CurvatureDerivativeAtDistance(double distance) const;
+  double VelocityLimitAtDistance(double distance) const;
+  bool AccelerationBoundsAtDistance(double distance, double speed, double* lower,
+                                    double* upper) const;
+  ProgressState ProgressAtTime(double time) const;
 
   std::vector<ArcLengthSample> arc_length_table_;
-  std::vector<Eigen::Vector2d> control_points_;
+  std::vector<TimeProfileSample> time_profile_;
+  std::vector<Eigen::Vector2d> waypoints_;
+  std::vector<Eigen::Vector2d> spline_control_points_;
+  std::vector<double> knots_;
   double duration_;
   double total_length_ = 0.0;
   TrajectoryLimits limits_;
+  bool reverse_ = false;
 };
+
+// Transitional source compatibility for existing callers. New code should use
+// CubicBSplineTrajectory explicitly.
+using BezierTrajectory = CubicBSplineTrajectory;
 
 }  // namespace differential_drive_mpc
 

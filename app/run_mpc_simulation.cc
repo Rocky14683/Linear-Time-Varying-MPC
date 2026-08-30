@@ -22,9 +22,9 @@ int main() {
   using differential_drive_mpc::TrajectoryLimits;
   using differential_drive_mpc::Twist2d;
 
-  const TrajectoryLimits trajectory_limits{.max_linear_velocity = 10.0,
+  const TrajectoryLimits trajectory_limits{.max_linear_velocity = 5.0,
                                            .max_linear_acceleration = 20.0,
-                                           .max_angular_velocity = 8.0,
+                                           .max_angular_velocity = 5.0,
                                            .max_angular_acceleration = 4.0,
                                            .wheel_radius = 0.05,
                                            .track_width = 0.30,
@@ -33,8 +33,8 @@ int main() {
   const BezierTrajectory trajectory = BezierTrajectory::Create(
       {Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.5, 0.0), Eigen::Vector2d(2.0, 2.8),
        Eigen::Vector2d(4.8, 2.0), Eigen::Vector2d(0, 2.0), Eigen::Vector2d(-2, 0),
-       Eigen::Vector2d(4.8, 1.2)},
-      4.0, trajectory_limits);
+       Eigen::Vector2d(4.8, 1.2), Eigen::Vector2d(8, 1.2)},
+      trajectory_limits);
 
   const double dt = 0.05;
   LtvMpc controller({
@@ -56,16 +56,16 @@ int main() {
       .angular_drag = 0.01,
       .lateral_slip_response_rate = 8.0,
       .max_traction_acceleration = 8.0,
-      .lateral_drift_coefficient = 0.0,
-      .along_track_weight = 14,
-      .cross_track_weight = 25,
-      .heading_weight = 0.5,
-      .world_velocity_weight = 10,
+      .lateral_drift_coefficient = 0.8,
+      .along_track_weight = 10,
+      .cross_track_weight = 70,
+      .heading_weight = 2,
+      .world_velocity_weight = 6,
       .yaw_rate_weight = 0.08,
       .linear_command_weight = 1.8,
-      .angular_command_weight = 0.08,
+      .angular_command_weight = 0.8,
       .control_change_weight = 0.8,
-      .terminal_along_track_weight = 20.0,
+      .terminal_along_track_weight = 100.0,
       .terminal_cross_track_weight = 100.0,
       .terminal_world_velocity_weight = 3.6,
       .terminal_yaw_rate_weight = 0.16,
@@ -79,7 +79,7 @@ int main() {
                               .angular_drag = 0.01,
                               .lateral_slip_response_rate = 8.0,
                               .max_traction_acceleration = 8.0,
-                              .lateral_drift_coefficient = 0.99},
+                              .lateral_drift_coefficient = 0.8},
       RobotState{.pose = Pose2d{.position = Eigen::Vector2d(0.0, -0.25), .heading = 0.0}},
       DisturbanceField{.base_linear_friction = 0.03,
                        .x_friction_gradient = 0.045,

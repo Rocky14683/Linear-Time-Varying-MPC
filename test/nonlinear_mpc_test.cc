@@ -14,7 +14,15 @@ namespace {
 BezierTrajectory MakeStraightTrajectory() {
   return BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.0),
                                    Eigen::Vector2d(3.0, 0.0), Eigen::Vector2d(4.0, 0.0)},
-                                  4.0, {});
+                                  {});
+}
+
+TEST(AngleErrorTest, UsesTheShortestSignedRotationAcrossThePiBoundary) {
+  constexpr double kSmallAngle = 0.02;
+  EXPECT_NEAR(ShortestAngularDifference(-kPi + kSmallAngle, kPi - kSmallAngle),
+              2.0 * kSmallAngle, 1e-12);
+  EXPECT_NEAR(ShortestAngularDifference(kPi - kSmallAngle, -kPi + kSmallAngle),
+              -2.0 * kSmallAngle, 1e-12);
 }
 
 TEST(LtvMpcTest, ProducesAFeasibleForwardCommandAndPrediction) {
@@ -53,7 +61,6 @@ TEST(LtvMpcTest, EnforcesWheelRateBoundsAcrossThePredictionHorizon) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.8, 0.0),
                                 Eigen::Vector2d(0.0, 0.8), Eigen::Vector2d(0.8, 0.8)},
-                               2.0,
                                {.wheel_radius = config.wheel_radius,
                                 .track_width = config.track_width,
                                 .max_wheel_velocity = config.max_wheel_velocity,

@@ -4,10 +4,28 @@
 
 #include <Eigen/Core>
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace differential_drive_mpc {
 namespace {
+
+TEST(CubicBSplineTrajectoryTest, InterpolatesEveryWaypoint) {
+  const std::vector<Eigen::Vector2d> waypoints = {
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.4), Eigen::Vector2d(2.0, -0.5),
+      Eigen::Vector2d(3.0, 0.8), Eigen::Vector2d(4.0, 0.0)};
+  const CubicBSplineTrajectory trajectory = CubicBSplineTrajectory::Create(waypoints, {});
+  const std::vector<Eigen::Vector2d> path_samples =
+      trajectory.SamplePositionsByDistance(10001);
+
+  for (const Eigen::Vector2d& waypoint : waypoints) {
+    double nearest_distance = std::numeric_limits<double>::infinity();
+    for (const Eigen::Vector2d& sample : path_samples) {
+      nearest_distance = std::min(nearest_distance, (sample - waypoint).norm());
+    }
+    EXPECT_LT(nearest_distance, 1e-3);
+  }
+}
 
 TEST(BezierTrajectoryTest, ScalesDurationAndRespectsAllMotionLimits) {
   const TrajectoryLimits limits{.max_linear_velocity = 1.0,
@@ -17,7 +35,7 @@ TEST(BezierTrajectoryTest, ScalesDurationAndRespectsAllMotionLimits) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.0),
                                 Eigen::Vector2d(1.0, 2.0), Eigen::Vector2d(3.0, 2.0)},
-                               1.0, limits);
+                               limits);
 
   EXPECT_GT(trajectory.duration(), 1.0);
   for (const TrajectoryPoint& point : trajectory.Sample(400)) {
@@ -43,7 +61,7 @@ TEST(BezierTrajectoryTest, CapsComposedWheelVelocityOnTightCurves) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.8, 0.0),
                                 Eigen::Vector2d(0.0, 0.8), Eigen::Vector2d(0.8, 0.8)},
-                               1.0, limits);
+                               limits);
 
   for (const TrajectoryPoint& point : trajectory.Sample(1000)) {
     const double half_track = limits.track_width / 2.0;
@@ -60,7 +78,7 @@ TEST(BezierTrajectoryTest, GeneratesAHeadingTangentToThePath) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.0),
                                 Eigen::Vector2d(2.0, 1.0), Eigen::Vector2d(3.0, 1.0)},
-                               4.0, {});
+                               {});
 
   const TrajectoryPoint point = trajectory.Evaluate(trajectory.duration() * 0.4);
   const Eigen::Vector2d lateral(-std::sin(point.pose.heading), std::cos(point.pose.heading));
@@ -69,24 +87,49 @@ TEST(BezierTrajectoryTest, GeneratesAHeadingTangentToThePath) {
   EXPECT_NEAR(trajectory.Evaluate(trajectory.duration()).pose.position.y(), 1.0, 1e-12);
 }
 
-TEST(BezierTrajectoryTest, UsesArcLengthForItsLinearSpeedProfile) {
+TEST(BezierTrajectoryTest, CanFollowTheSamePathInReverse) {
+  const std::vector<Eigen::Vector2d> control_points = {
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.0),
+      Eigen::Vector2d(2.0, 1.0), Eigen::Vector2d(3.0, 1.0)};
+  const BezierTrajectory forward = BezierTrajectory::Create(control_points, {});
+  const BezierTrajectory reverse = BezierTrajectory::Create(control_points, {}, true);
+
+  const TrajectoryPoint forward_point = forward.Evaluate(forward.duration() * 0.4);
+  const TrajectoryPoint reverse_point = reverse.Evaluate(reverse.duration() * 0.4);
+  EXPECT_TRUE(reverse.reverse());
+  EXPECT_NEAR((reverse_point.pose.position - forward_point.pose.position).norm(), 0.0, 1e-12);
+  EXPECT_NEAR((reverse_point.velocity - forward_point.velocity).norm(), 0.0, 1e-12);
+  EXPECT_NEAR((reverse_point.acceleration - forward_point.acceleration).norm(), 0.0, 1e-12);
+  EXPECT_NEAR(std::abs(WrapAngle(reverse_point.pose.heading - forward_point.pose.heading)), kPi,
+              1e-12);
+  EXPECT_NEAR(reverse_point.twist.linear, -forward_point.twist.linear, 1e-12);
+  EXPECT_NEAR(reverse_point.acceleration_twist.linear,
+              -forward_point.acceleration_twist.linear, 1e-12);
+  EXPECT_NEAR(reverse_point.twist.angular, forward_point.twist.angular, 1e-12);
+  EXPECT_NEAR(reverse_point.acceleration_twist.angular,
+              forward_point.acceleration_twist.angular, 1e-12);
+}
+
+TEST(BezierTrajectoryTest, ReplacesTheFixedMinimumJerkProfileWithConstraintAwareTiming) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.2, 0.0),
                                 Eigen::Vector2d(4.0, 3.0), Eigen::Vector2d(5.0, 3.0)},
-                               8.0, {});
+                               {});
 
   const TrajectoryPoint midpoint = trajectory.Evaluate(trajectory.duration() * 0.5);
-  // The minimum-jerk distance profile has q'(0.5) = 1.875. Consequently,
-  // the physical speed is independent of the Bezier control parameter rate.
-  const double expected_speed = 1.875 * trajectory.total_length() / trajectory.duration();
-  EXPECT_NEAR(midpoint.twist.linear, expected_speed, 1e-8);
+  // The previous implementation imposed this quintic speed at every path,
+  // regardless of the locally available actuator acceleration. The new
+  // forward/backward timing profile is instead determined by those limits.
+  const double fixed_minimum_jerk_speed = 1.875 * trajectory.total_length() / trajectory.duration();
+  EXPECT_GT(std::abs(midpoint.twist.linear - fixed_minimum_jerk_speed), 1e-3);
+  EXPECT_GT(midpoint.twist.linear, 0.0);
 }
 
 TEST(BezierTrajectoryTest, SamplesDisplayedPathUniformlyByDistance) {
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.1, 0.0),
                                 Eigen::Vector2d(8.0, 0.0), Eigen::Vector2d(10.0, 0.0)},
-                               8.0, {});
+                               {});
 
   const std::vector<Eigen::Vector2d> positions = trajectory.SamplePositionsByDistance(11);
   ASSERT_EQ(positions.size(), 11U);
@@ -104,7 +147,7 @@ TEST(BezierTrajectoryTest, StartsAndEndsAtRestWithoutViolatingAccelerationLimits
   const BezierTrajectory trajectory =
       BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(1.0, 0.0),
                                 Eigen::Vector2d(1.0, 2.0), Eigen::Vector2d(3.0, 2.0)},
-                               1.0, limits);
+                               limits);
 
   const TrajectoryPoint start = trajectory.Evaluate(0.0);
   const TrajectoryPoint end = trajectory.Evaluate(trajectory.duration());
@@ -127,7 +170,7 @@ TEST(BezierTrajectoryTest, StartsAndEndsAtRestWithoutViolatingAccelerationLimits
 TEST(BezierTrajectoryTest, RejectsACusp) {
   EXPECT_THROW(BezierTrajectory::Create({Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.0, 0.0),
                                          Eigen::Vector2d(1.0, 0.0), Eigen::Vector2d(2.0, 0.0)},
-                                        1.0, {}),
+                                        {}),
                std::invalid_argument);
 }
 

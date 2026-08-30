@@ -72,10 +72,10 @@ void RerunVisualizer::LogStep(double time, const TrajectoryPoint &target, const 
             "/world/target_trajectory/waypoints",
             rr::Points2D(target_trajectory_).with_colors(rr::Color(55, 180, 255)).with_radii(0.007F));
     recording_.log(
-            "/world/bezier_control_polygon",
+            "/world/spline_waypoint_polygon",
             rr::LineStrips2D({control_points_}).with_colors(rr::Color(180, 120, 255)).with_radii(0.020F));
     recording_.log(
-            "/world/bezier_control_points",
+            "/world/spline_waypoints",
             rr::Points2D(control_points_).with_colors(rr::Color(255, 220, 70)).with_radii(0.02F));
     const rr::Position2D robot_position = ToRerunPoint(state.pose.position);
     followed_path_.push_back(robot_position);

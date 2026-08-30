@@ -59,7 +59,7 @@ class LtvMpc {
  public:
   explicit LtvMpc(MpcConfig config);
 
-  Twist2d Solve(const RobotState& state, const BezierTrajectory& reference, double reference_time);
+  Twist2d Solve(const RobotState& state, const Trajectory& reference, double reference_time);
   const std::vector<RobotState>& predicted_states() const { return predicted_states_; }
   double last_cost() const { return last_cost_; }
 
@@ -77,7 +77,7 @@ class LtvMpc {
   void LinearizeDynamics(const DynamicState& state, const Eigen::Vector2d& control,
                          Eigen::Matrix<double, 6, 6>* state_jacobian,
                          Eigen::Matrix<double, 6, 2>* control_jacobian) const;
-  void BuildQuadratic(const RobotState& state, const BezierTrajectory& reference,
+  void BuildQuadratic(const RobotState& state, const Trajectory& reference,
                       double reference_time, Eigen::MatrixXd* hessian,
                       Eigen::VectorXd* gradient) const;
   double QuadraticCost(const ControlSequence& controls, const Eigen::MatrixXd& hessian,

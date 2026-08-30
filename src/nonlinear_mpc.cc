@@ -27,7 +27,7 @@ LtvMpc::LtvMpc(MpcConfig config) : config_(config) {
   }
 }
 
-Twist2d LtvMpc::Solve(const RobotState& state, const BezierTrajectory& reference,
+Twist2d LtvMpc::Solve(const RobotState& state, const Trajectory& reference,
                       double reference_time) {
   Eigen::MatrixXd hessian;
   Eigen::VectorXd gradient;
@@ -260,7 +260,7 @@ void LtvMpc::LinearizeDynamics(const DynamicState& state, const Eigen::Vector2d&
   }
 }
 
-void LtvMpc::BuildQuadratic(const RobotState& state, const BezierTrajectory& reference,
+void LtvMpc::BuildQuadratic(const RobotState& state, const Trajectory& reference,
                             double reference_time, Eigen::MatrixXd* hessian,
                             Eigen::VectorXd* gradient) const {
   const int input_count = 2 * config_.horizon_steps;
